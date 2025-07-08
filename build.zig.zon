@@ -1,0 +1,13 @@
+.{
+    .name = .mwasm,
+    .version = "0.0.0",
+    .fingerprint = 0x2f6c4a03c338556f, // Changing this has security and trust implications.
+    .minimum_zig_version = "0.15.0-dev.905+edf785db0",
+    .dependencies = .{
+    },
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+    },
+}
