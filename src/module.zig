@@ -1,6 +1,15 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const ArrayList = std.ArrayList;
+const types = @import("types.zig");
+const VectorType = types.VectorType;
+const ValueType = types.ValueType;
+const ResultType = types.ResultType;
+const FunctionType = types.FunctionType;
+const Expr = types.Expr;
+const Function = types.Function;
+const Memory = types.Memory;
+const ExportDesc = types.ExportDesc;
 const Instruction = @import("instructions.zig").Instruction;
 
 const Self = @This();
@@ -31,89 +40,6 @@ const SectionId = enum {
     code,
     data,
     dataCount,
-};
-
-const NumberType = enum {
-    i32,
-    i64,
-    f32,
-    f64,
-};
-
-const VectorType = struct {};
-
-const RefType = enum {
-    funcref,
-    externref,
-};
-
-const ValueTypeTag = enum {
-    number_type,
-    vector_type,
-    ref_type,
-};
-
-const ValueType = union(ValueTypeTag) {
-    number_type: NumberType,
-    vector_type: VectorType,
-    ref_type: RefType,
-};
-
-const ResultType = ArrayList(ValueType);
-
-const FunctionType = struct {
-    params: ArrayList(ValueType),
-    results: ArrayList(ValueType),
-};
-
-const Expr = ArrayList(Instruction);
-
-const Function = struct {
-    type: usize,
-    locals: ArrayList(ValueType),
-    body: Expr,
-
-    fn init(allocator: Allocator, @"type": usize) Function {
-        return Function{
-            .type = @"type",
-            .locals = ArrayList(ValueType).init(allocator),
-            .body = Expr.init(allocator),
-        };
-    }
-
-    fn deinit(self: *Function) void {
-        self.locals.deinit();
-        self.body.deinit();
-    }
-};
-
-const Memory = struct {
-    min_size: usize,
-    max_size: ?usize,
-    mem: []u8,
-    allocator: Allocator,
-
-    const page_size = 65536;
-
-    fn init(allocator: Allocator, min_size: usize, max_size: ?usize) !Memory {
-        return Memory{
-            .min_size = min_size,
-            .max_size = max_size,
-            .mem = try allocator.alloc(u8, min_size * page_size),
-            .allocator = allocator,
-        };
-    }
-
-    fn deinit(self: *Memory) void {
-        self.allocator.free(self.mem);
-    }
-};
-
-const ExportDesc = enum {
-    function,
-    table,
-    mem,
-    global,
 };
 
 const Export = struct {
