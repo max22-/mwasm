@@ -1,6 +1,7 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const ArrayList = std.ArrayList;
+const Instruction = @import("instructions.zig").Instruction;
 
 const Self = @This();
 
@@ -10,7 +11,7 @@ functions: ArrayList(Function),
 mems: ArrayList(Memory),
 exports: ArrayList(Export),
 
-const ModuleError = error{
+pub const ModuleError = error{
     InvalidWasmBinary,
     InvalidMagic,
     InvalidVersion,
@@ -65,7 +66,7 @@ const FunctionType = struct {
     results: ArrayList(ValueType),
 };
 
-const Expr = ArrayList(u8);
+const Expr = ArrayList(Instruction);
 
 const Function = struct {
     type: usize,
@@ -275,10 +276,58 @@ fn readExportSection(self: *Self, w: anytype) !void {
     }
 }
 
+fn readLocals(allocator: Allocator, w: anytype) !ArrayList(ValueType) {
+    var result = ArrayList(ValueType).init(allocator);
+    errdefer result.deinit();
+    const n = std.leb.readUleb128(u32, w) catch return ModuleError.InvalidWasmBinary;
+    var i: i32 = 0;
+    while (i < n) : (i += 1) {
+        const n2 = std.leb.readUleb128(u32, w) catch return ModuleError.InvalidWasmBinary;
+        const value_type = try readValueType(w);
+        var j: i32 = 0;
+        while (j < n2) : (j += 1) {
+            try result.append(value_type);
+        }
+    }
+    return result;
+}
+
+fn readExpr(allocator: Allocator, w: anytype) !Expr {
+    var e = Expr.init(allocator);
+    errdefer e.deinit();
+    while (true) {
+        const b = try Instruction.read(w);
+        try e.append(b);
+        if (b == Instruction.end) break;
+    }
+    return e;
+}
+
+fn readCodeSection(self: *Self, w: anytype) !void {
+    const n = std.leb.readUleb128(u32, w) catch return ModuleError.InvalidWasmBinary;
+    std.debug.print("{} code entries\n", .{n});
+    var i: usize = 0;
+    while (i < n) : (i += 1) {
+        if (i >= self.functions.items.len) {
+            return ModuleError.InvalidWasmBinary;
+        }
+        const size: u32 = std.leb.readUleb128(u32, w) catch return ModuleError.InvalidWasmBinary;
+        const locals = try readLocals(self.allocator, w);
+        errdefer locals.deinit();
+        const expr = try readExpr(self.allocator, w);
+        errdefer expr.deinit();
+        self.functions.items[i].locals = locals;
+        self.functions.items[i].body = expr;
+
+        std.debug.print("{}- size={} expr={any}\n", .{ i, size, expr });
+    }
+}
+
 fn readSections(self: *Self, w: anytype) !void {
     while (true) {
         const id = w.readByte() catch break;
         if (id > 12) {
+            std.debug.print("error: id = {}\n", .{id});
             return ModuleError.InvalidWasmBinary;
         }
         const section_id = @as(SectionId, @enumFromInt(id));
@@ -289,6 +338,7 @@ fn readSections(self: *Self, w: anytype) !void {
             .function => try self.readFunctionSection(w),
             .memory => try self.readMemorySection(w),
             .@"export" => try self.readExportSection(w),
+            .code => try self.readCodeSection(w),
             else => w.skipBytes(size, .{}) catch {
                 return ModuleError.InvalidWasmBinary;
             },
