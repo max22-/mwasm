@@ -285,10 +285,10 @@ fn readSections(self: *Self, w: anytype) !void {
         std.debug.print("section: {}\n", .{section_id});
         const size = try std.leb.readUleb128(u32, w);
         switch (section_id) {
-            .type => try readTypeSection(self, w),
-            .function => try readFunctionSection(self, w),
-            .memory => try readMemorySection(self, w),
-            .@"export" => try readExportSection(self, w),
+            .type => try self.readTypeSection(w),
+            .function => try self.readFunctionSection(w),
+            .memory => try self.readMemorySection(w),
+            .@"export" => try self.readExportSection(w),
             else => w.skipBytes(size, .{}) catch {
                 return ModuleError.InvalidWasmBinary;
             },
