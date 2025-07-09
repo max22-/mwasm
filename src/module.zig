@@ -93,11 +93,13 @@ const Memory = struct {
     mem: []u8,
     allocator: Allocator,
 
+    const page_size = 65536;
+
     fn init(allocator: Allocator, min_size: usize, max_size: ?usize) !Memory {
         return Memory{
             .min_size = min_size,
             .max_size = max_size,
-            .mem = try allocator.alloc(u8, min_size),
+            .mem = try allocator.alloc(u8, min_size * page_size),
             .allocator = allocator,
         };
     }
