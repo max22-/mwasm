@@ -7,6 +7,8 @@ const Self = @This();
 allocator: Allocator,
 function_types: ArrayList(FunctionType),
 functions: ArrayList(Function),
+mems: ArrayList(Memory),
+exports: ArrayList(Export),
 
 const ModuleError = error{
     InvalidWasmBinary,
@@ -84,11 +86,50 @@ const Function = struct {
     }
 };
 
+const Memory = struct {
+    min_size: usize,
+    max_size: ?usize,
+    mem: []u8,
+    allocator: Allocator,
+
+    fn init(allocator: Allocator, min_size: usize, max_size: ?usize) !Memory {
+        return Memory{
+            .min_size = min_size,
+            .max_size = max_size,
+            .mem = try allocator.alloc(u8, min_size),
+            .allocator = allocator,
+        };
+    }
+
+    fn deinit(self: *Memory) void {
+        self.allocator.free(self.mem);
+    }
+};
+
+const ExportDesc = enum {
+    function,
+    table,
+    mem,
+    global,
+};
+
+const Export = struct {
+    name: []u8,
+    desc: ExportDesc,
+    allocator: Allocator,
+
+    fn deinit(self: *Export) void {
+        self.allocator.free(self.name);
+    }
+};
+
 pub fn init(allocator: Allocator) Self {
     return Self{
         .allocator = allocator,
         .function_types = ArrayList(FunctionType).init(allocator),
         .functions = ArrayList(Function).init(allocator),
+        .mems = ArrayList(Memory).init(allocator),
+        .exports = ArrayList(Export).init(allocator),
     };
 }
 
@@ -102,6 +143,14 @@ pub fn deinit(self: *Self) void {
         f.deinit();
     }
     self.functions.deinit();
+    for (self.mems.items) |*m| {
+        m.deinit();
+    }
+    self.mems.deinit();
+    for (self.exports.items) |*e| {
+        e.deinit();
+    }
+    self.exports.deinit();
 }
 
 pub fn load(self: *Self, w: anytype) !void {
@@ -179,6 +228,53 @@ fn readFunctionSection(self: *Self, w: anytype) !void {
     }
 }
 
+fn readMemorySection(self: *Self, w: anytype) !void {
+    const n = std.leb.readUleb128(u32, w) catch return ModuleError.InvalidWasmBinary;
+    std.debug.print("{} memories\n", .{n});
+    var i: u32 = 0;
+    while (i < n) : (i += 1) {
+        const b = w.readByte() catch return ModuleError.InvalidWasmBinary;
+        switch (b) {
+            0x00 => {
+                const min_size = w.readByte() catch return ModuleError.InvalidWasmBinary;
+                try self.mems.append(try Memory.init(self.allocator, min_size, null));
+                std.debug.print("min = {}\n", .{min_size});
+            },
+            0x01 => {
+                const min_size = w.readByte() catch return ModuleError.InvalidWasmBinary;
+                const max_size = w.readByte() catch return ModuleError.InvalidWasmBinary;
+                std.debug.print("min = {}, max = {}\n", .{ min_size, max_size });
+            },
+            else => return ModuleError.InvalidWasmBinary,
+        }
+    }
+}
+
+fn readExportSection(self: *Self, w: anytype) !void {
+    const n = std.leb.readUleb128(u32, w) catch return ModuleError.InvalidWasmBinary;
+    std.debug.print("{} export(s)\n", .{n});
+    var i: u32 = 0;
+    while (i < n) : (i += 1) {
+        const len = w.readByte() catch return ModuleError.InvalidWasmBinary;
+        const name = try self.allocator.alloc(u8, len);
+        errdefer self.allocator.free(name);
+        w.readNoEof(name) catch return ModuleError.InvalidWasmBinary;
+        const desc = w.readByte() catch return ModuleError.InvalidWasmBinary;
+        if (desc > 3) return ModuleError.InvalidWasmBinary;
+        const idx = std.leb.readUleb128(u32, w) catch return ModuleError.InvalidWasmBinary;
+        std.debug.print("- {s} {} {}\n", .{
+            name,
+            @as(ExportDesc, @enumFromInt(desc)),
+            idx,
+        });
+        try self.exports.append(Export{
+            .name = name,
+            .desc = @as(ExportDesc, @enumFromInt(desc)),
+            .allocator = self.allocator,
+        });
+    }
+}
+
 fn readSections(self: *Self, w: anytype) !void {
     while (true) {
         const id = w.readByte() catch break;
@@ -191,6 +287,8 @@ fn readSections(self: *Self, w: anytype) !void {
         switch (section_id) {
             .type => try readTypeSection(self, w),
             .function => try readFunctionSection(self, w),
+            .memory => try readMemorySection(self, w),
+            .@"export" => try readExportSection(self, w),
             else => w.skipBytes(size, .{}) catch {
                 return ModuleError.InvalidWasmBinary;
             },
